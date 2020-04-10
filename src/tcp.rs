@@ -13,7 +13,7 @@ use tokio::prelude::*;
 use tokio::sync::Mutex;
 use tokio::time::delay_for;
 
-fn connect_to_server(
+pub fn connect_to_server(
     times: i32,
     status_cb: impl Fn(&str) + Send + Sync + 'static,
 ) -> BoxFuture<'static, Option<TcpStream>> {
@@ -29,10 +29,10 @@ fn connect_to_server(
                 delay_for(Duration::from_millis(1_000)).await;
                 let msg = format!("retry connect...{}", times);
                 status_cb(&msg);
-                if times > 10 {
+                if times < 1 {
                     return None;
                 }
-                let times = times + 1;
+                let times = times - 1;
                 // let next_times = Arc::new(time);
                 return connect_to_server(times, status_cb).await;
             }
@@ -51,46 +51,42 @@ pub async fn connect() -> Result<(), Box<dyn Error>> {
     })
     .await;
 
-    if let Some(mut socket) = stream {
+    if let Some(mut stream) = stream {
         println!("created stream");
         // let mut buffer = vec![0u8; 1000]; //reserve 1000 bytes in the receive buffer
         //get all data that is available to us at the moment...
 
-        // let (mut read_half, mut write_half) = stream.split();
-        // let (mut recv, mut send) = io::split(stream);
-        // let mut stdin = io::stdin();
-        // let mut stdout = io::stdout();
-
-        // let send = tokio::spawn(async move { io::copy(&mut stdin, &mut send).await });
-        // let recv = tokio::spawn(async move { io::copy(&mut recv, &mut stdout).await });
-
-        // send.await??;
-        // recv.await??;
+        let (mut read_half, mut write_half) = io::split(stream);
+        // read_half.await??;
 
         tokio::spawn(async move {
             let mut buf = [0; 1024];
 
             // In a loop, read data from the socket and write the data back.
             loop {
-                let n = match socket.read(&mut buf).await {
+                let _n = match read_half.read(&mut buf).await {
                     // socket closed
-                    Ok(n) if n == 0 => return,
-                    Ok(n) => n,
+                    Ok(n) if n == 0 => {
+                        println!("socket closed");
+                        return;
+                    },
+                    Ok(n) => {
+                        println!("n {}", n);
+                    },
                     Err(e) => {
                         eprintln!("failed to read from socket; err = {:?}", e);
                         return;
                     }
                 };
-
-                // Write the data back
-                if let Err(e) = socket.write_all(&buf[0..n]).await {
-                    eprintln!("failed to write to socket; err = {:?}", e);
-                    return;
-                }
             }
         });
-    // let result = stream.write(b"hello world\n").await;
-    // println!("wrote to stream; success={:?}", result.is_ok());
+        let mut stdin = io::stdin();
+        let mut stdout = io::stdout();
+
+        let send = tokio::spawn(async move { io::copy(&mut stdin, &mut write_half).await });
+        // let recv = tokio::spawn(async move { io::copy(&mut read_half, &mut stdout).await });
+
+        send.await??;
     } else {
         println!("connot connet, wait a memont...");
     }
